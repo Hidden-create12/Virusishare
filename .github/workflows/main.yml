@@ -9,6 +9,9 @@ jobs:
     timeout-minutes: 3600
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Configure Core RDP Settings
         run: |
           # Enable RDP and force-disable NLA to prevent Error 0x204
@@ -35,31 +38,21 @@ jobs:
           # Store password separately for easy reading later
           echo "RDP_ONLY_PASS=$password" >> $env:GITHUB_ENV
 
-      - name: Install Tailscale
-        run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          Remove-Item $installerPath -Force
+      # --- REPLACED MANUAL INSTALL WITH OFFICIAL TAILSCALE ACTION ---
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          args: --hostname=gh-runner-${{ github.run_id }}
+      # -------------------------------------------------------------
 
-      - name: Establish Tailscale Connection
+      - name: Get Tailscale IP & Verify RDP
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-          
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-              Start-Sleep -Seconds 5
-              $retries++
-          }
+          $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-      
-      - name: Verify RDP Accessibility
-        run: |
-          Write-Host "Checking port 3389 on $env:TAILSCALE_IP..."
-          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          
+          Write-Host "Checking port 3389 on $tsIP..."
+          $testResult = Test-NetConnection -ComputerName $tsIP -Port 3389
           if (-not $testResult.TcpTestSucceeded) {
               Write-Error "Local Port Check Failed!"
               exit 1
@@ -69,8 +62,8 @@ jobs:
         run: |
           Write-Host "`n=== RDP LOGIN CREDENTIALS ==="
           Write-Host "IP Address: $env:TAILSCALE_IP"
-          Write-Host "Username:   .\RDP"
-          Write-Host "Password:   $env:RDP_ONLY_PASS"
+          Write-Host "Username:    .\RDP"
+          Write-Host "Password:    $env:RDP_ONLY_PASS"
           Write-Host "==============================`n"
           
           while ($true) {
