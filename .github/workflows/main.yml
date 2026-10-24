@@ -38,17 +38,25 @@ jobs:
           # Store password separately for easy reading later
           echo "RDP_ONLY_PASS=$password" >> $env:GITHUB_ENV
 
-      # --- REPLACED MANUAL INSTALL WITH OFFICIAL TAILSCALE ACTION ---
-      - name: Connect to Tailscale
-        uses: tailscale/github-action@v2
-        with:
-          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
-          args: --hostname=gh-runner-${{ github.run_id }}
-      # -------------------------------------------------------------
-
-      - name: Get Tailscale IP & Verify RDP
+      - name: Install and Connect Tailscale
         run: |
-          $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+
+      - name: Verify RDP Accessibility
+        run: |
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
+          }
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
           
           Write-Host "Checking port 3389 on $tsIP..."
