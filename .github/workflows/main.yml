@@ -49,8 +49,10 @@ jobs:
           Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$installerPath`" /qn /norestart" -Wait
           Remove-Item $installerPath -Force
 
-          Write-Host "Starting Tailscale connection..."
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          Write-Host "Starting Tailscale service and connecting..."
+          Start-Service Tailscale
+          Start-Sleep -Seconds 3
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID --accept-routes
           Write-Host "Tailscale connected successfully!"
 
       - name: Verify RDP Accessibility
