@@ -1,79 +1,79 @@
 name: RDP
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:
 
 jobs:
-  secure-rdp:
-    runs-on: windows-latest
-    timeout-minutes: 3600
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
 
-    steps:
-      - name: Configure Core RDP Settings
-        run: |
-          # Enable RDP and force-disable NLA to prevent Error 0x204
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+    steps:
+      - name: Configure Core RDP Settings
+        run: |
+          # Enable RDP and force-disable NLA to prevent Error 0x204
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
 
-          # Clear old rules and force open 3389 on all profiles (Public/Private/Domain)
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389 profile=any
+          # Clear old rules and force open 3389 on all profiles (Public/Private/Domain)
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389 profile=any
 
-          Restart-Service -Name TermService -Force
+          Restart-Service -Name TermService -Force
 
-      - name: Create RDP User
-        run: |
-          # Generate a 16-character secure password
-          $password = -join ((33..126) | Get-Random -Count 16 | % {[char]$_})
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          
-          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
-          
-          # Store password separately for easy reading later
-          echo "RDP_ONLY_PASS=$password" >> $env:GITHUB_ENV
+      - name: Create RDP User
+        run: |
+          # Generate a 16-character secure password
+          $password = -join ((33..126) | Get-Random -Count 16 | % {[char]$_})
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+          
+          # Store password separately for easy reading later
+          echo "RDP_ONLY_PASS=$password" >> $env:GITHUB_ENV
 
-      - name: Install Tailscale
-        run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          Remove-Item $installerPath -Force
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
 
-      - name: Establish Tailscale Connection
-        run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-          
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-              Start-Sleep -Seconds 5
-              $retries++
-          }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-      
-      - name: Verify RDP Accessibility
-        run: |
-          Write-Host "Checking port 3389 on $env:TAILSCALE_IP..."
-          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
-          if (-not $testResult.TcpTestSucceeded) {
-              Write-Error "Local Port Check Failed!"
-              exit 1
-          }
+      - name: Establish Tailscale Connection
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+      
+      - name: Verify RDP Accessibility
+        run: |
+          Write-Host "Checking port 3389 on $env:TAILSCALE_IP..."
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "Local Port Check Failed!"
+              exit 1
+          }
 
-      - name: Maintain Connection
-        run: |
-          Write-Host "`n=== RDP LOGIN CREDENTIALS ==="
-          Write-Host "IP Address: $env:TAILSCALE_IP"
-          Write-Host "Username:   .\RDP"
-          Write-Host "Password:   $env:RDP_ONLY_PASS"
-          Write-Host "==============================`n"
-          
-          while ($true) {
-              Write-Host "[$(Get-Date)] Runner is Online..."
-              Start-Sleep -Seconds 300
-          }
+      - name: Maintain Connection
+        run: |
+          Write-Host "`n=== RDP LOGIN CREDENTIALS ==="
+          Write-Host "IP Address: $env:TAILSCALE_IP"
+          Write-Host "Username:   .\RDP"
+          Write-Host "Password:   $env:RDP_ONLY_PASS"
+          Write-Host "==============================`n"
+          
+          while ($true) {
+              Write-Host "[$(Get-Date)] Runner is Online..."
+              Start-Sleep -Seconds 300
+          }
